@@ -1,0 +1,8 @@
+# Solo conda-forge: los canales "defaults" de Anaconda exigen aceptar sus ToS.
+name: tt-a048
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.10
+  - pip

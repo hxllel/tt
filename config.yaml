@@ -1,0 +1,47 @@
+# Configuracion por defecto del prototipo TT 2027-A048.
+# Rutas relativas a la raiz del repositorio. "auto" = decidido por pipeline/hardware.py
+
+dispositivo: auto            # auto | cuda | cpu
+salidas_dir: salidas
+modelos_dir: models
+videos_dir: videos
+
+deteccion:
+  modelo: auto               # auto (por perfil) | yolo26n | yolo26s | yolo26m | yolo26l
+  motor: auto                # auto | pt | engine (TensorRT) | openvino
+  imgsz: auto                # auto = 960 en GPU, 640 en CPU; 1280 si hay personas lejanas
+  intervalo_frames: 10       # procesa 1 de cada N frames
+  conf_tracker: 0.1          # ByteTrack necesita detecciones de baja confianza para asociar
+  conf_recorte: 0.4          # confianza minima para guardar un recorte
+  tracker: bytetrack.yaml
+  margen_contexto: 0.10
+  top_k_por_track: 3         # recortes guardados por persona
+  min_detecciones_track: 3
+  min_alto_px: 48
+  umbral_baja_luz: 60        # luminancia media (0-255) bajo la cual se aplica CLAHE
+  frames_para_cerrar_track: 60   # llamadas sin ver el track antes de escribirlo a disco
+
+superres:
+  activar: auto              # auto (segun perfil) | true | false
+  modelo: realesr-general-x4v3.pth   # o un checkpoint HAT (*.pth) dentro de models/
+  max_alto_px: 160           # solo se mejora el mejor recorte si es mas bajo que esto
+
+vlm:
+  modelo: auto               # auto | 0.5b | 1.5b | 7b
+  checkpoints:
+    0.5b: ml-fastvlm/checkpoints/llava-fastvithd_0.5b_stage3
+    1.5b: ml-fastvlm/checkpoints/llava-fastvithd_1.5b_stage2
+    7b: ml-fastvlm/checkpoints/llava-fastvithd_7b_stage3
+  resolucion: 1024           # 1024 | 768 | 512 (entrada del codificador FastViTHD)
+  max_new_tokens: 64
+  batch: auto                # auto (por VRAM) o un entero
+  cpu_int8: false            # int8 dinamico en CPU: probado en Ryzen 4600H, degrada la salida y no acelera
+  formato: en                # en (recomendado) | json | libre (espanol)
+
+busqueda:
+  clip_modelo: ViT-B-16-SigLIP2
+  clip_pretrained: webli
+  clip_respaldo: [xlm-roberta-base-ViT-B-32, laion5b_s13b_b90k]
+  texto_modelo: intfloat/multilingual-e5-small
+  top_k: 20
+  candidatos_hibrido: 30

@@ -1,1 +1,16 @@
 yolo26n.pt
+./ml-fastvlm
+*.mov
+*.mp4
+*.avi
+*.mkv
+videos/
+salidas/
+models/
+*.pt
+*.engine
+*_openvino_model/
+ml-fastvlm/checkpoints/
+__pycache__/
+.pytest_cache/
+*.egg-info/
