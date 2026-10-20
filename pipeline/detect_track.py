@@ -230,7 +230,7 @@ def process_video(video_path, cfg: dict, hw_device: str, perfil_yolo: str,
         for tid in viejos:
             cerrar(activos.pop(tid))
 
-        if progress and call_idx % 10 == 0:
+        if progress is not None and call_idx % 10 == 0:
             progress(min(0.99, call_idx / total_muestreados),
                      f"Deteccion: frame {frame_idx}/{props['frames']} | personas {len(tracks_meta) + len(activos)}")
 

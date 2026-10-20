@@ -1,5 +1,9 @@
 """Orquestador: mantiene los modelos cargados una sola vez (RNF-17) y expone las
-operaciones que usan la interfaz y los scripts de linea de comandos."""
+operaciones que usan la interfaz y los scripts de linea de comandos.
+
+Toda la lectura de la imagen la hace FastVLM: describe cada persona una sola vez
+y la busqueda trabaja sobre ese texto, por similitud semantica (e5) o por
+coincidencia lexica de atributos."""
 
 import json
 from pathlib import Path
@@ -11,7 +15,10 @@ from pipeline import detect_track, describe, embed, search, superres
 from pipeline.config import dir_video, load_config, ruta, _deep_merge
 from pipeline.hardware import choose_profile, detect
 
-MODOS = ("clip", "hibrido", "texto", "lexico")
+MODOS = ("combinado", "texto", "lexico")
+SIN_DESCRIPCIONES = ("Este video no tiene descripciones de FastVLM. Generalas con "
+                     "'Generar descripciones FastVLM de todo el video' "
+                     "(o `python search_fastvlm.py <video> --describir`).")
 
 
 class Motor:
@@ -31,7 +38,7 @@ class Motor:
             self.perfil.vlm_batch = int(v["batch"])
         if self.info.device == "cpu":
             torch.set_num_threads(max(1, self.info.cpu_cores))
-        self._sr = self._clip = self._texto = self._desc = None
+        self._sr = self._texto = self._desc = None
 
     def reconfigurar(self, overrides: dict):
         self.cfg = _deep_merge(self.cfg, overrides)
@@ -57,11 +64,6 @@ class Motor:
                                          self.device, self.perfil.half)
         return self._sr
 
-    def clip(self):
-        if self._clip is None:
-            self._clip = embed.ClipEmbedder(self.cfg, self.device, self.perfil.half)
-        return self._clip
-
     def texto(self):
         if self._texto is None:
             self._texto = embed.TextEmbedder(self.cfg, self.device, self.perfil.half)
@@ -76,14 +78,16 @@ class Motor:
         return detect_track.exportar_detector(self.cfg, self.device, self.perfil.yolo)
 
     # ------------------------------------------------------------ operaciones
-    def procesar_video(self, video_path, procedencia: dict = None, describir: bool = False, progress=None) -> dict:
+    def procesar_video(self, video_path, procedencia: dict = None, describir: bool = True,
+                       progress=None) -> dict:
+        """Detecta y trackea, mejora los recortes pequenos y (por defecto) genera
+        la descripcion FastVLM de cada persona, que es lo que hace buscable el video."""
         meta = detect_track.process_video(video_path, self.cfg, self.device, self.perfil.yolo,
                                           procedencia, progress)
         out_dir = dir_video(self.cfg, meta["video"])
         if meta["crops"]:
             if self.superres_activa():
                 superres.apply_to_video(out_dir, self.cfg, self.sr(), progress)
-            embed.embed_video_clip(out_dir, self.clip(), self.perfil.clip_batch, progress)
             if describir:
                 describe.describir_video(out_dir, self.describer(), None, progress)
         return self.stats(meta["video"])
@@ -95,32 +99,28 @@ class Motor:
     def describir(self, video: str, crop_ids=None, progress=None) -> dict:
         return describe.describir_video(dir_video(self.cfg, video), self.describer(), crop_ids, progress)
 
-    def _emb_clip(self, out_dir: Path, n_crops: int) -> np.ndarray:
-        p = out_dir / "emb_clip.npy"
-        if p.exists():
-            emb = np.load(p)
-            if len(emb) == n_crops:
-                return emb
-        return embed.embed_video_clip(out_dir, self.clip(), self.perfil.clip_batch)
+    def _scores_lexico(self, consulta: str, utiles: dict, exigir_prenda: bool) -> dict:
+        frases = search.frases_atributo(consulta)
+        if not frases:
+            if exigir_prenda:
+                raise ValueError("No se reconocio ninguna prenda en la consulta "
+                                 "(playera, pantalon, mochila...). Revisa la redaccion "
+                                 "o usa el modo semantico.")
+            return {}
+        return {c: search.score_lexico(frases, d.get("texto_busqueda", "")) for c, d in utiles.items()}
 
-    def _scores_texto(self, out_dir: Path, descs: dict, consulta: str, crop_ids: list) -> dict:
-        cache = out_dir / "emb_texto.npz"
-        ids, vecs = [], None
-        if cache.exists():
-            z = np.load(cache)
-            ids, vecs = list(z["ids"]), z["vecs"]
-        por_id = {int(i): vecs[k] for k, i in enumerate(ids)} if vecs is not None else {}
-        faltan = [c for c in crop_ids if c not in por_id and str(c) in descs and not descs[str(c)].get("error")]
-        if faltan:
-            nuevos = self.texto().encode([descs[str(c)]["texto_busqueda"] for c in faltan], "passage")
-            por_id.update(zip(faltan, nuevos))
-            np.savez(cache, ids=np.array(list(por_id), dtype=np.int64), vecs=np.stack(list(por_id.values())))
-        q = self.texto().encode([consulta], "query")[0]
-        return {c: float(por_id[c] @ q) for c in crop_ids if c in por_id}
+    def _scores_texto(self, out_dir: Path, consulta: str, descs: dict, utiles: dict, progress) -> dict:
+        vecs = embed.embeddings_descripciones(out_dir, self.texto(), descs, list(utiles), progress)
+        # FastVLM describe en ingles: traducir la consulta con el diccionario de
+        # atributos mejora bastante el emparejamiento.
+        en = search.consulta_en_ingles(consulta)
+        q = self.texto().encode([en or consulta], "query")[0]
+        return {c: float(v @ q) for c, v in vecs.items()}
 
-    def buscar(self, video: str, consulta: str, modo: str = "clip", top_k: int = None, progress=None) -> list:
+    def buscar(self, video: str, consulta: str, modo: str = "combinado", top_k: int = None,
+               progress=None) -> list:
         if modo not in MODOS:
-            raise ValueError(f"Modo invalido: {modo}")
+            raise ValueError(f"Modo invalido: {modo}. Usa uno de {MODOS}.")
         if not consulta or not consulta.strip():
             raise ValueError("Escribe la descripcion de la alerta.")
         top_k = top_k or self.cfg["busqueda"]["top_k"]
@@ -129,42 +129,34 @@ class Motor:
         crops = meta["crops"]
         if not crops:
             return []
-        tracks = {t["track_id"]: t for t in meta["tracks"]}
         descs = describe.cargar_descripciones(out_dir)
+        if not descs:
+            raise ValueError(SIN_DESCRIPCIONES)
+        utiles = {int(c): d for c, d in descs.items() if not d.get("error")}
 
         if modo == "lexico":
-            frases = search.frases_atributo(consulta)
-            if not frases:
-                raise ValueError("No se reconocio ninguna prenda en la consulta.")
-            if not descs:
-                raise ValueError("No hay descripciones de FastVLM para este video. Generalas primero o usa el modo clip/hibrido.")
-            scores = {int(c): search.score_lexico(frases, d.get("texto_busqueda", ""))
-                      for c, d in descs.items() if not d.get("error")}
-            scores = {c: s for c, s in scores.items() if s > 0}
+            scores = {c: s for c, s in self._scores_lexico(consulta, utiles, True).items() if s > 0}
         elif modo == "texto":
-            if not descs:
-                raise ValueError("No hay descripciones de FastVLM para este video. Generalas primero o usa el modo clip/hibrido.")
-            scores = self._scores_texto(out_dir, descs, consulta, [int(c) for c in descs])
+            scores = self._scores_texto(out_dir, consulta, descs, utiles, progress)
         else:
-            emb = self._emb_clip(out_dir, len(crops))
-            s = search.score_clip(emb, self.clip().encode_texts(search.textos_clip(consulta)))
-            scores = dict(enumerate(s.tolist()))
-            if modo == "hibrido":
-                por_track = search.agregar_por_track(crops, scores)
-                cand = sorted(por_track.values(), key=lambda x: -x[0])[: self.cfg["busqueda"]["candidatos_hibrido"]]
-                ids = [cid for _, cid in cand]
-                descs = describe.describir_video(out_dir, self.describer(), ids, progress)
-                txt = self._scores_texto(out_dir, descs, consulta, ids)
-                c_n = search.minmax([s for s, _ in cand])
-                t_n = search.minmax([txt.get(cid, 0.0) for cid in ids])
-                scores = {cid: float(0.5 * a + 0.5 * b) for cid, a, b in zip(ids, c_n, t_n)}
+            # El semantico aporta recall (tolera otra redaccion) y el lexico
+            # precision (amarra cada color con su prenda). Normalizados, 50/50.
+            sem = self._scores_texto(out_dir, consulta, descs, utiles, progress)
+            lex = self._scores_lexico(consulta, utiles, False)
+            ids = list(sem)
+            if not lex or not any(lex.values()):
+                scores = sem
+            else:
+                s_n = search.minmax(sem[c] for c in ids)
+                l_n = search.minmax(lex.get(c, 0.0) for c in ids)
+                scores = {c: 0.5 * a + 0.5 * b for c, a, b in zip(ids, s_n, l_n)}
 
         ranking = sorted(search.agregar_por_track(crops, scores).items(), key=lambda kv: -kv[1][0])[:top_k]
+        tracks = {t["track_id"]: t for t in meta["tracks"]}
         resultados = []
         for pos, (tid, (score, cid)) in enumerate(ranking, 1):
             e = crops[cid]
-            d = descs.get(str(cid)) or next((descs[str(x["crop_id"])] for x in crops
-                                             if x["track_id"] == tid and str(x["crop_id"]) in descs), {})
+            d = descs.get(str(cid), {})
             t = tracks.get(tid, {})
             resultados.append({
                 "posicion": pos, "track_id": tid, "score": round(score, 4), "crop_id": cid,

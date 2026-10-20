@@ -215,7 +215,7 @@ class Describer:
                             salida[i] = {"error": str(e2)}
             return salida
 
-        cb = (lambda i, n: progress(i / n, f"FastVLM {self.vlm}: {i}/{n} recortes")) if progress else None
+        cb = (lambda i, n: progress(i / n, f"FastVLM {self.vlm}: {i}/{n} recortes")) if progress is not None else None
         recs, self.batch = run_batched(lote, list(paths), self.batch, cb)
         return recs, self.batch
 

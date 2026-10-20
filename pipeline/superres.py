@@ -1,7 +1,7 @@
 """Superresolucion de recortes con spandrel (Real-ESRGAN, HAT, SwinIR...).
 
 Solo se aplica al mejor recorte (rank 0) de cada persona y solo si es pequeno,
-porque FastVLM/CLIP reescalan de todas formas y la SR es costosa. spandrel
+porque FastVLM reescala de todas formas y la SR es costosa. spandrel
 reemplaza a basicsr, que ya no importa con torchvision >= 0.17."""
 
 import json
@@ -74,7 +74,7 @@ def apply_to_video(out_dir, cfg: dict, sr: SuperRes, progress=None) -> dict:
         cv2.imwrite(str(sr_dir / nombre), up)
         e["crop_sr_path"] = f"crops_sr/{nombre}"
         hechos += 1
-        if progress and i % 10 == 0:
+        if progress is not None and i % 10 == 0:
             progress(i / max(1, len(objetivo)), f"Superresolucion {i}/{len(objetivo)}")
     with open(out_dir / "metadata.json", "w", encoding="utf-8") as f:
         json.dump(meta, f, ensure_ascii=False, indent=1)

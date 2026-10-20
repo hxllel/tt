@@ -8,8 +8,10 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = ROOT / "config.yaml"
+# Ajustes de ESTA maquina, generados por init_entorno.py. No se versiona.
+LOCAL_CONFIG = ROOT / "config.local.yaml"
 
-# Pesos de HuggingFace (CLIP, e5) dentro del proyecto, no en el perfil del usuario.
+# Pesos de HuggingFace (modelo de embeddings de texto) dentro del proyecto.
 os.environ.setdefault("HF_HOME", str(ROOT / "models" / "hf"))
 
 
@@ -23,9 +25,16 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return out
 
 
+def _leer(path) -> dict:
+    with open(path, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
+
+
 def load_config(path=None, overrides: dict = None) -> dict:
-    with open(path or DEFAULT_CONFIG, "r", encoding="utf-8") as f:
-        cfg = yaml.safe_load(f)
+    """config.yaml -> config.local.yaml (si existe) -> overrides del llamador."""
+    cfg = _leer(path or DEFAULT_CONFIG)
+    if path is None and LOCAL_CONFIG.exists():
+        cfg = _deep_merge(cfg, _leer(LOCAL_CONFIG))
     return _deep_merge(cfg, overrides)
 
 

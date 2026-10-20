@@ -28,5 +28,6 @@ if (Get-Command nvidia-smi -ErrorAction SilentlyContinue) {
 & $py -m pip install -r requirements.txt
 & $py -m pip install --no-deps -e .\ml-fastvlm
 & $py download_models.py
-& $py -m pipeline.hardware
+# Diagnostica el equipo, crea las carpetas y escribe config.local.yaml
+& $py init_entorno.py --inicializar
 Write-Host "`nListo. Abre una terminal nueva y ejecuta:`n  conda activate tt-a048`n  python app.py"

@@ -1,19 +1,20 @@
-"""Busqueda: normalizacion de consultas tipo Alerta Amber, coincidencia lexica por
-atributos y ranking por similitud coseno. Solo numpy: sin modelos aqui."""
+"""Busqueda sobre las descripciones que genero FastVLM: normalizacion de consultas
+tipo Alerta Amber, coincidencia lexica por atributos y utilidades de ranking.
+Sin modelos ni dependencias pesadas. El sistema no usa CLIP: la unica lectura de
+la imagen la hace FastVLM, y aqui solo se trabaja con su texto."""
 
 import re
 import unicodedata
 
-import numpy as np
-
 # Sinonimos -> termino canonico (espanol de Mexico). Incluye ingles porque el
-# VLM a veces responde en ingles.
+# prompt de FastVLM es en ingles y sus descripciones salen en ese idioma.
 _SINONIMOS = {
     # prenda superior
     "playera": ["playera", "camiseta", "remera", "tshirt", "t-shirt", "polo", "top", "shirt"],
     "camisa": ["camisa", "blusa", "blouse"],
     "sudadera": ["sudadera", "hoodie", "buzo", "sweatshirt"],
-    "chamarra": ["chamarra", "chaqueta", "campera", "jacket", "abrigo", "coat", "rompevientos"],
+    "chamarra": ["chamarra", "chaqueta", "campera", "jacket", "abrigo", "coat", "rompevientos",
+                 "blazer", "saco", "gabardina"],
     "sueter": ["sueter", "jersey", "sweater", "chaleco", "vest"],
     "vestido": ["vestido", "dress"],
     "uniforme": ["uniforme", "uniform"],
@@ -53,6 +54,20 @@ _SINONIMOS = {
 CANON = {s: k for k, vs in _SINONIMOS.items() for s in vs}
 COLORES = {"azul", "rojo", "negro", "blanco", "gris", "verde", "amarillo", "cafe", "rosa", "morado", "naranja", "beige"}
 PRENDAS = set(_SINONIMOS) - COLORES
+# Termino canonico -> ingles, para traducir la consulta antes de vectorizarla:
+# FastVLM describe en ingles y el emparejamiento mejora bastante.
+EN_CANON = {
+    "playera": "t-shirt", "camisa": "shirt", "sudadera": "hoodie", "chamarra": "jacket",
+    "sueter": "sweater", "vestido": "dress", "uniforme": "uniform",
+    "pantalon": "pants", "mezclilla": "jeans", "pants": "sweatpants", "short": "shorts",
+    "falda": "skirt", "leggins": "leggings",
+    "tenis": "sneakers", "zapatos": "shoes", "botas": "boots", "sandalias": "sandals",
+    "mochila": "backpack", "gorra": "cap", "sombrero": "hat", "lentes": "glasses",
+    "bolsa": "bag", "cubrebocas": "face mask",
+    "azul": "blue", "rojo": "red", "negro": "black", "blanco": "white", "gris": "gray",
+    "verde": "green", "amarillo": "yellow", "cafe": "brown", "rosa": "pink",
+    "morado": "purple", "naranja": "orange", "beige": "beige",
+}
 _SEPARADORES = re.compile(r"[,;.:\n]|\by\b|\bcon\b|\be\b|\band\b|\bwith\b")
 
 
@@ -110,33 +125,27 @@ def score_lexico(frases_consulta: list, doc_texto: str) -> float:
     return total / len(frases_consulta)
 
 
-def textos_clip(consulta: str) -> list:
-    """Plantilla completa + una por atributo; se promedian con penalizacion del minimo."""
-    textos = [f"una foto de una persona que viste {consulta.strip()}"]
-    textos += [f"una foto de una persona con {f['texto']}" for f in frases_atributo(consulta)]
-    return textos
+def consulta_en_ingles(texto: str) -> str:
+    """"Chamarra negra y pantalon blanco" -> "black jacket, white pants".
+
+    Devuelve "" si no se reconocio ninguna prenda; en ese caso conviene
+    vectorizar la consulta original."""
+    partes = []
+    for f in frases_atributo(texto):
+        prendas = " ".join(EN_CANON[p] for p in sorted(f["prendas"]) if p in EN_CANON)
+        colores = " ".join(EN_CANON[c] for c in sorted(f["colores"]) if c in EN_CANON)
+        if prendas:
+            partes.append(f"{colores} {prendas}".strip())
+    return ", ".join(partes)
 
 
-def score_clip(emb_imagenes: np.ndarray, emb_textos: np.ndarray) -> np.ndarray:
-    """emb_imagenes (N, D) y emb_textos (1+F, D) normalizados -> score (N,)."""
-    S = emb_imagenes @ emb_textos.T
-    completo = S[:, 0]
-    if S.shape[1] == 1:
-        return completo
-    atr = S[:, 1:]
-    return 0.5 * completo + 0.5 * (0.5 * atr.mean(axis=1) + 0.5 * atr.min(axis=1))
-
-
-def coseno(a: np.ndarray, b: np.ndarray) -> np.ndarray:
-    a = a / (np.linalg.norm(a, axis=-1, keepdims=True) + 1e-12)
-    b = b / (np.linalg.norm(b, axis=-1, keepdims=True) + 1e-12)
-    return a @ b.T
-
-
-def minmax(x: np.ndarray) -> np.ndarray:
-    x = np.asarray(x, dtype=np.float32)
-    rng = x.max() - x.min() if x.size else 0
-    return (x - x.min()) / rng if rng > 1e-9 else np.ones_like(x)
+def minmax(valores) -> list:
+    """Escala a [0, 1] para poder promediar scores de escalas distintas."""
+    valores = list(valores)
+    if not valores:
+        return []
+    lo, hi = min(valores), max(valores)
+    return [1.0] * len(valores) if hi - lo < 1e-9 else [(v - lo) / (hi - lo) for v in valores]
 
 
 def agregar_por_track(crops: list, scores: dict) -> dict:

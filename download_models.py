@@ -1,6 +1,6 @@
 """Descarga los pesos necesarios a models/ y ml-fastvlm/checkpoints/ (idempotente).
 
-    python download_models.py                 # YOLO26 n/s, SR compacto, FastVLM 0.5B stage3, CLIP y e5
+    python download_models.py                 # YOLO26 n/s, SR compacto, FastVLM 0.5B stage3 y e5
     python download_models.py --vlm 1.5b 7b   # checkpoints adicionales de FastVLM
     python download_models.py --hat           # (opcional) indica como obtener HAT
 """
@@ -52,7 +52,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--vlm", nargs="*", default=["0.5b"], help="tamanos FastVLM stage3 a bajar")
     ap.add_argument("--yolo", nargs="*", default=["yolo26n", "yolo26s"])
-    ap.add_argument("--sin-clip", action="store_true")
+    ap.add_argument("--sin-texto", action="store_true", help="no bajar el modelo de embeddings de texto")
     ap.add_argument("--hat", action="store_true")
     args = ap.parse_args()
     cfg = load_config()
@@ -81,13 +81,10 @@ def main():
     for tam in args.vlm:
         descargar_fastvlm(tam, 3)
 
-    if not args.sin_clip:
-        print("CLIP y embeddings de texto (HuggingFace):")
-        from pipeline.embed import ClipEmbedder, TextEmbedder
-        c = ClipEmbedder(cfg, "cpu", False)
-        print(f"  {c.nombre} ok")
-        t = TextEmbedder(cfg, "cpu", False)
-        print(f"  {t.nombre} ok")
+    if not args.sin_texto:
+        print("Embeddings de texto (HuggingFace):")
+        from pipeline.embed import TextEmbedder
+        print(f"  {TextEmbedder(cfg, 'cpu', False).nombre} ok")
     print("Listo.")
 
 

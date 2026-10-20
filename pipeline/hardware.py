@@ -11,7 +11,7 @@ import psutil
 # Memoria aproximada (GB) de cada componente en fp16; se usa para estimar la carga.
 VRAM_VLM_GB = {"0.5b": 1.4, "1.5b": 3.6, "7b": 15.5}
 VRAM_YOLO_GB = {"yolo26n": 0.2, "yolo26s": 0.3, "yolo26m": 0.5, "yolo26l": 0.7}
-VRAM_EXTRA_GB = 0.4 + 0.25 + 0.1   # CLIP B/16 + e5-small + SR compacto
+VRAM_EXTRA_GB = 0.25 + 0.1         # e5-small (texto) + superresolucion compacta
 VRAM_RESERVA_GB = 1.5              # activaciones del codificador a 1024 + KV cache
 
 
@@ -35,7 +35,6 @@ class Profile:
     yolo: str
     superres: bool
     vlm_batch: int
-    clip_batch: int
     half: bool
     vram_estimada_gb: float = 0.0
     nota: str = ""
@@ -69,18 +68,18 @@ def choose_profile(info: HardwareInfo, vlm_disponibles=("0.5b", "1.5b", "7b")) -
     """Elige modelos y tamanos de lote segun la VRAM libre (o CPU)."""
     if info.device == "cpu":
         # SR compacta cuesta ~0.1 s por recorte en CPU y mejora mucho los recortes chicos
-        p = Profile(vlm="0.5b", yolo="yolo26n", superres=True, vlm_batch=1, clip_batch=32,
-                    half=False, nota="CPU: FastVLM en fp32; la primera descripcion tarda ~2 min en calentar")
+        p = Profile(vlm="0.5b", yolo="yolo26n", superres=True, vlm_batch=1, half=False,
+                    nota="CPU: FastVLM en fp32; describir cuesta ~25 s por persona, usa GPU para videos largos")
     else:
         free = info.vram_free_gb
         if free < 4:
-            p = Profile("0.5b", "yolo26n", True, 4, 128, True)
+            p = Profile("0.5b", "yolo26n", True, 4, True)
         elif free < 10:
-            p = Profile("1.5b", "yolo26s", True, 8, 256, True)
+            p = Profile("1.5b", "yolo26s", True, 8, True)
         elif free < 20:
-            p = Profile("1.5b", "yolo26m", True, 16, 256, True)
+            p = Profile("1.5b", "yolo26m", True, 16, True)
         else:
-            p = Profile("7b", "yolo26m", True, 16, 512, True)
+            p = Profile("7b", "yolo26m", True, 16, True)
 
     # Si el checkpoint recomendado no existe, baja al mas grande disponible que quepa.
     orden = ["7b", "1.5b", "0.5b"]
@@ -142,7 +141,7 @@ def resumen(info: HardwareInfo, p: Profile) -> str:
     return (f"{hw}  \n**CPU:** {info.cpu_name} ({info.cpu_cores} nucleos fisicos), RAM {info.ram_gb} GB  \n"
             f"**torch:** {info.torch_version}  \n\n"
             f"**Perfil:** FastVLM {p.vlm} | {p.yolo} | superresolucion {'si' if p.superres else 'no'} | "
-            f"lote VLM {p.vlm_batch} | lote CLIP {p.clip_batch} | {'fp16' if p.half else 'fp32'}  \n"
+            f"lote VLM {p.vlm_batch} | {'fp16' if p.half else 'fp32'}  \n"
             f"**Carga estimada:** {p.vram_estimada_gb} GB" + (f"  \n_{p.nota}_" if p.nota else ""))
 
 

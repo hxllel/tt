@@ -29,5 +29,6 @@ print("Exportado:", m.exportar_detector())
 EOF
 fi
 
-python -m pipeline.hardware
+# Diagnostica el equipo, crea las carpetas y escribe config.local.yaml
+python init_entorno.py --inicializar
 echo "Listo: conda activate tt-a048 && python app.py --no-abrir   (en tu laptop: ssh -L 7860:localhost:7860 usuario@host)"

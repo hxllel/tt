@@ -39,9 +39,8 @@ vlm:
   formato: en                # en (recomendado) | json | libre (espanol)
 
 busqueda:
-  clip_modelo: ViT-B-16-SigLIP2
-  clip_pretrained: webli
-  clip_respaldo: [xlm-roberta-base-ViT-B-32, laion5b_s13b_b90k]
+  # Embeddings de TEXTO (multilingues): comparan la alerta en espanol contra la
+  # descripcion que FastVLM genera en ingles. No hay ningun modelo de imagen
+  # aparte de FastVLM.
   texto_modelo: intfloat/multilingual-e5-small
   top_k: 20
-  candidatos_hibrido: 30

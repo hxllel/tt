@@ -18,9 +18,8 @@ einops-exts==0.0.4
 shortuuid
 safetensors
 
-# Superresolucion y embeddings
+# Superresolucion de recortes pequenos
 spandrel
-open_clip_torch
 
 # Interfaz, metricas y utilidades
 gradio>=5.35,<6        # 5.11 falla con pydantic>=2.11 (TypeError bool is not iterable)

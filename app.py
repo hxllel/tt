@@ -30,10 +30,9 @@ from pipeline.video_io import fmt_tiempo
 AVISO = ("⚠️ Cada coincidencia es una **sugerencia sujeta a verificación humana**, no una identificación "
          "positiva (RNF-12). El sistema solo compara vestimenta; no usa rostros ni datos biométricos.")
 MODOS_UI = {
-    "CLIP imagen↔texto (rápido, recomendado con miles de personas)": "clip",
-    "Híbrido: CLIP + verificación con FastVLM (top-K)": "hibrido",
-    "Texto↔texto: descripción FastVLM vs alerta (e5)": "texto",
-    "Léxico por atributos (línea base TT1)": "lexico",
+    "Combinada: semántica + atributos (recomendada)": "combinado",
+    "Semántica: descripción FastVLM ↔ alerta (embeddings e5)": "texto",
+    "Léxica por atributos (línea base TT1)": "lexico",
 }
 MOTOR: Motor = None
 
@@ -91,7 +90,7 @@ def procesar(archivos, rutas_texto, procedencia, consentimiento, notas, describi
             "video": v.stem, "personas": d.get("tracks_guardados"), "recortes": d.get("recortes"),
             "máx. en frame": d.get("max_personas_en_frame"),
             "detección (s)": d.get("tiempo_deteccion_s"), "fps proc.": d.get("fps_procesados"),
-            "SR (s)": st.get("superres", {}).get("tiempo_s"), "CLIP (s)": st.get("clip", {}).get("tiempo_s"),
+            "SR (s)": st.get("superres", {}).get("tiempo_s"),
             "FastVLM (s)": st.get("descripcion", {}).get("tiempo_s"),
         })
     return pd.DataFrame(filas), _videos(), _videos()
@@ -161,7 +160,7 @@ def construir() -> gr.Blocks:
     cfg = MOTOR.cfg
     with gr.Blocks(title="TT 2027-A048 · Búsqueda de personas") as demo:
         gr.Markdown("# Búsqueda de personas en grabaciones por descripción de vestimenta\n"
-                    "Prototipo offline TT 2027-A048 · YOLO26 + ByteTrack → superresolución → CLIP / FastVLM")
+                    "Prototipo offline TT 2027-A048 · YOLO26 + ByteTrack → superresolución → FastVLM → búsqueda")
         gr.Markdown(AVISO)
 
         with gr.Tab("1. Procesar video"):
@@ -175,8 +174,9 @@ def construir() -> gr.Blocks:
                                               value="Voluntario propio", label="Procedencia (RF-17)")
                     consentimiento = gr.Checkbox(label="Consentimiento informado por escrito registrado")
                     notas = gr.Textbox(label="Notas", lines=1)
-                    describir = gr.Checkbox(value=MOTOR.device == "cuda",
-                                            label="Describir a todas las personas con FastVLM (lento en CPU)")
+                    describir = gr.Checkbox(
+                        value=True,
+                        label="Describir a cada persona con FastVLM (necesario para buscar; lento en CPU)")
             btn_proc = gr.Button("Procesar", variant="primary")
             tabla_proc = gr.Dataframe(label="Resultado", interactive=False)
 
@@ -190,6 +190,8 @@ def construir() -> gr.Blocks:
             with gr.Row():
                 modo = gr.Dropdown(list(MODOS_UI), value=list(MODOS_UI)[0], label="Modo de búsqueda", scale=3)
                 top_k = gr.Slider(1, 100, value=cfg["busqueda"]["top_k"], step=1, label="Top-K", scale=1)
+            gr.Markdown("Los tres modos buscan sobre las descripciones que FastVLM generó al procesar el vídeo. "
+                        "Si el vídeo se procesó sin describir, usa primero el botón de la derecha.")
             with gr.Row():
                 btn_buscar = gr.Button("Buscar", variant="primary")
                 btn_desc = gr.Button("Generar descripciones FastVLM de todo el video")

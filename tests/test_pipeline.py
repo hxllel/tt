@@ -5,7 +5,7 @@ from pipeline.detect_track import TrackState, expand_bbox, quality_score
 from pipeline.describe import parse_respuesta, texto_de_busqueda
 from pipeline.hardware import HardwareInfo, choose_profile, run_batched
 from pipeline.metrics_yolo import iou_matrix, match_greedy
-from pipeline.search import agregar_por_track, frases_atributo, normalizar, score_clip, score_lexico
+from pipeline.search import agregar_por_track, frases_atributo, normalizar, score_lexico
 
 
 # ------------------------------------------------------------------ busqueda
@@ -29,15 +29,6 @@ def test_lexico_sinonimos_y_color():
     assert score_lexico(q, "camiseta roja, pantalón de mezclilla azul") == 1.0
     assert score_lexico(q, "camiseta azul, pantalón de mezclilla rojo") == 0.5   # prendas bien, colores cruzados
     assert score_lexico(q, "vestido verde") == 0.0
-
-
-def test_score_clip_ordena_por_coseno():
-    t = np.eye(3, dtype=np.float32)            # texto completo + 2 atributos
-    img = np.array([[1, 1, 1], [1, 0, 0], [0, 0, 1]], dtype=np.float32)
-    img /= np.linalg.norm(img, axis=1, keepdims=True)
-    s = score_clip(img, t)
-    assert s.argmax() == 0                     # coincide con todo
-    assert s[1] > s[2]
 
 
 def test_agregar_por_track_toma_maximo():
@@ -124,3 +115,69 @@ def test_limpiar_salida_primera_linea():
     from pipeline.describe import limpiar_salida
     txt = "The person is wearing a white shirt.\nWhat is the person wearing?\nAnswer: x"
     assert limpiar_salida(txt) == "The person is wearing a white shirt."
+
+
+def test_progress_nunca_se_evalua_como_booleano():
+    """gr.Progress define __len__: `if progress` revienta (gradio 5.11) o es
+    siempre falso cuando no hay iterables (gradio 5.50). Siempre `is not None`."""
+    import re
+    from pathlib import Path
+    malo = re.compile(r"(if|and|or|not)\s+progress\s*(:|\)|and|or|$)|if\s+progress\s+else")
+    for f in Path("pipeline").glob("*.py"):
+        for n, linea in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
+            assert not malo.search(linea), f"{f}:{n} evalua `progress` como booleano: {linea.strip()}"
+
+
+def test_consulta_en_ingles():
+    from pipeline.search import consulta_en_ingles
+    assert consulta_en_ingles("Vestía chamarra negra y pantalón blanco") == "black jacket, white pants"
+    assert consulta_en_ingles("iba caminando") == ""
+
+
+def test_minmax_escala_y_tolera_constantes():
+    from pipeline.search import minmax
+    assert minmax([1.0, 3.0, 2.0]) == [0.0, 1.0, 0.5]
+    assert minmax([0.9, 0.9]) == [1.0, 1.0]
+    assert minmax([]) == []
+
+
+def test_lexico_amarra_color_con_prenda():
+    """Lo que la similitud semantica no distingue: quien lleva el pantalon blanco."""
+    from pipeline.search import frases_atributo, score_lexico
+    q = frases_atributo("chamarra negra, pantalón blanco y bolsa negra")
+    correcto = "black blazer over a white shirt, white pants, black shoes, and a black bag"
+    distractor = "black top and black pants, black shoes, and a black bag"
+    assert score_lexico(q, correcto) > score_lexico(q, distractor)
+
+
+# ------------------------------------------------------------------ init_entorno
+def test_checkpoint_ok_detecta_zip_anidado(tmp_path):
+    import init_entorno as ie
+    plano = tmp_path / "plano"
+    (plano).mkdir()
+    (plano / "config.json").write_text("{}")
+    anidado = tmp_path / "anidado"
+    (anidado / "llava-fastvithd_0.5b_stage3").mkdir(parents=True)
+    (anidado / "llava-fastvithd_0.5b_stage3" / "config.json").write_text("{}")
+    assert ie.checkpoint_ok(plano)
+    assert ie.checkpoint_ok(anidado)
+    assert not ie.checkpoint_ok(tmp_path / "no-existe")
+
+
+def test_perfil_por_vram_sin_dependencias(monkeypatch):
+    """Sin torch instalado debe seguir recomendando algo sensato."""
+    import init_entorno as ie
+    monkeypatch.setattr(ie, "hay", lambda m: False)
+    monkeypatch.setattr(ie, "checkpoint_ok", lambda p: False)
+    assert ie.perfil({"disponible": False})["dispositivo"] == "cpu"
+    p = ie.perfil({"disponible": True, "vram_libre_gb": 23})
+    assert (p["dispositivo"], p["vlm"], p["vlm_batch"], p["half"]) == ("cuda", "7b", 16, True)
+    assert ie.perfil({"disponible": True, "vram_libre_gb": 6})["vlm"] == "1.5b"
+
+
+def test_perfil_baja_al_checkpoint_disponible(monkeypatch):
+    import init_entorno as ie
+    monkeypatch.setattr(ie, "hay", lambda m: False)
+    monkeypatch.setattr(ie, "checkpoint_ok", lambda p: "0.5b" in str(p))
+    p = ie.perfil({"disponible": True, "vram_libre_gb": 23})
+    assert p["vlm"] == "0.5b" and "no descargado" in p["nota"]
